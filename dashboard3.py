@@ -68,11 +68,11 @@ def calculate_score(row):
 
     ps = row["P/S"]
     pe = row["P/E"]
-    eps = row["EPS"]
     net_profit = row["USD Net Profit"]
     rev_growth = row["Revenue Growth %"]
     gross_margin = row["Gross Margin %"]
     fcf = row["Free Cash Flow"]
+    peg = row["PEG"]
     
     # 1. Capital Efficiency Check: Quality Margin Profile
     if not pd.isna(gross_margin):
@@ -90,13 +90,12 @@ def calculate_score(row):
         elif rule_of_40 < 10:
             score -= 1; reasons.append("Fails Growth-Efficiency Test")
 
-    # 3. Dynamic Relative Value: PEG Ratio Framework
-    if not pd.isna(pe) and not pd.isna(rev_growth) and pe > 0 and rev_growth > 0:
-        peg = pe / rev_growth
-        if peg <= 1.0:
+    # 3. Dynamic Relative Value: PEG Ratio Framework (Leveraging the custom column)
+    if not pd.isna(peg):
+        if 0 < peg <= 1.0:
             score += 3; reasons.append(f"Undervalued Growth (PEG: {peg:.2f})")
-        elif peg >= 3.0:
-            score -= 2; reasons.append(f"Overextended Growth Valuation (PEG: {peg:.2f})")
+        elif peg >= 3.0 or peg < 0:
+            score -= 2; reasons.append(f"Stretched/Negative Growth Valuation (PEG: {peg:.2f})")
             
     # 4. Pure Cash Generator Bonus
     if not pd.isna(fcf) and fcf > 0:
@@ -157,6 +156,11 @@ def fetch_single_ticker_data(ticker):
         if not pd.isna(gross_margin):
             gross_margin *= 100
 
+        # Calculate PEG Ratio Column: PE / Growth Rate
+        peg_ratio = np.nan
+        if not pd.isna(pe_ratio) and not pd.isna(revenue_growth) and revenue_growth > 0:
+            peg_ratio = pe_ratio / revenue_growth
+
         # Edge case check: If we have absolutely no info dict elements, trigger data unavailable row layout
         if not info or pd.isna(market_cap) and pd.isna(revenue_usd):
             raise ValueError("Empty response payload")
@@ -166,14 +170,14 @@ def fetch_single_ticker_data(ticker):
             "Today %": today_pct, "Market Cap": market_cap, "USD Revenue": revenue_usd,
             "USD Net Profit": net_profit_usd, "Revenue Growth %": revenue_growth,
             "Gross Margin %": gross_margin, "Free Cash Flow": fcf_usd,
-            "P/S": ps_ratio, "P/E": pe_ratio, "EPS": eps
+            "P/S": ps_ratio, "P/E": pe_ratio, "PEG": peg_ratio, "EPS": eps
         }
     except Exception:
         return {
             "Ticker": ticker, "Company": "Data unavailable", "Price": np.nan, "Today %": np.nan,
             "Market Cap": np.nan, "USD Revenue": np.nan, "USD Net Profit": np.nan,
             "Revenue Growth %": np.nan, "Gross Margin %": np.nan, "Free Cash Flow": np.nan,
-            "P/S": np.nan, "P/E": np.nan, "EPS": np.nan
+            "P/S": np.nan, "P/E": np.nan, "PEG": np.nan, "EPS": np.nan
         }
 
 @st.cache_data(ttl=300)
@@ -217,6 +221,12 @@ def style_pe(val):
     if val <= GOOD_PE: return "color: #00cc66; font-weight:bold"
     return "color: #ff9900; font-weight:bold"
 
+def style_peg(val):
+    if pd.isna(val): return ""
+    if 0 < val <= 1.0: return "color: #00cc66; font-weight:bold"  # Good setup
+    if val >= 3.0 or val < 0: return "color: #ff3333; font-weight:bold"  # Overvalued or negative growth
+    return "color: #ff9900; font-weight:bold"
+
 def style_recommendation(val):
     if val == "Strong Buy": return "background-color: rgba(0, 204, 102, 0.15); color: #00cc66; font-weight:bold"
     if val == "Buy": return "background-color: rgba(255, 153, 0, 0.15); color: #ff9900; font-weight:bold"
@@ -229,12 +239,13 @@ def format_table(df_to_format):
             "Price": "${:.2f}", "Today %": "{:+.2f}%", "Market Cap": money_fmt,
             "USD Revenue": money_fmt, "USD Net Profit": money_fmt, "Revenue Growth %": "{:+.2f}%",
             "Gross Margin %": "{:.2f}%", "Free Cash Flow": money_fmt, "P/S": "{:.2f}",
-            "P/E": "{:.2f}", "EPS": "{:.2f}", "Score": "{:.0f}"
+            "P/E": "{:.2f}", "PEG": "{:.2f}", "EPS": "{:.2f}", "Score": "{:.0f}"
         }, na_rep="N/A")
         .map(style_today, subset=["Today %"])
         .map(style_profit, subset=["USD Net Profit", "EPS", "Free Cash Flow"])
         .map(style_ps, subset=["P/S"])
         .map(style_pe, subset=["P/E"])
+        .map(style_peg, subset=["PEG"])
         .map(style_recommendation, subset=["Recommendation"])
     )
 
